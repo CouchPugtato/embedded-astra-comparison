@@ -75,6 +75,93 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 
 
+class RecordingRobot:
+    """Expose the policy API while recording a frame after every action."""
+
+    def __init__(self, robot: Robot, output: Path, initial_frame) -> None:
+        self._robot = robot
+        self._frames = output / 'frames'
+        self._actions = output / 'actions.json'
+        self._events: list[dict[str, object]] = []
+        self._started = time.monotonic()
+        self._record('initial', {}, initial_frame)
+
+    def _record(
+        self,
+        action: str,
+        arguments: dict[str, object],
+        frame=None,
+        command_error: str | None = None,
+    ) -> None:
+        index = len(self._events)
+        event: dict[str, object] = {
+            'index': index,
+            'action': action,
+            'arguments': arguments,
+            'elapsed_seconds': round(time.monotonic() - self._started, 3),
+        }
+        if command_error is not None:
+            event['command_error'] = command_error
+        try:
+            captured = frame or self._robot.capture_camera()
+            filename = f'{index:03d}_{action}.png'
+            save_png(captured, self._frames / filename)
+            event['image'] = f'frames/{filename}'
+            event['camera_timestamp_ns'] = captured.timestamp_ns
+        except TimeoutError:
+            raise
+        except Exception as error:
+            event['capture_error'] = f'{type(error).__name__}: {error}'
+        self._events.append(event)
+        write_json(self._actions, {'events': self._events})
+
+    def _run_action(self, action: str, arguments: dict[str, object], command):
+        try:
+            result = command()
+        except Exception as error:
+            self._record(action, arguments, command_error=f'{type(error).__name__}: {error}')
+            raise
+        self._record(action, arguments)
+        return result
+
+    def capture_camera(self, timeout: float = 5.0):
+        return self._robot.capture_camera(timeout)
+
+    def get_end_effector_pose(self, timeout: float = 5.0):
+        return self._robot.get_end_effector_pose(timeout)
+
+    def move_to(self, position, orientation=None):
+        target = tuple(float(value) for value in position)
+        target_orientation = (
+            None if orientation is None else tuple(float(value) for value in orientation)
+        )
+        return self._run_action(
+            'move_to',
+            {
+                'position': list(target),
+                'orientation': None if target_orientation is None else list(target_orientation),
+            },
+            lambda: self._robot.move_to(target, target_orientation),
+        )
+
+    def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0):
+        offsets = {'dx': float(dx), 'dy': float(dy), 'dz': float(dz)}
+        return self._run_action(
+            'move_relative',
+            offsets,
+            lambda: self._robot.move_relative(**offsets),
+        )
+
+    def open_gripper(self) -> None:
+        self._run_action('open_gripper', {}, self._robot.open_gripper)
+
+    def close_gripper(self) -> None:
+        self._run_action('close_gripper', {}, self._robot.close_gripper)
+
+    def record_final(self, frame) -> None:
+        self._record('final', {}, frame)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Run one policy and collect feedback')
     parser.add_argument('--attempt', type=int, required=True)
@@ -178,12 +265,14 @@ def main() -> None:
 
     try:
         with Robot() as robot:
-            save_png(robot.capture_camera(), output / 'initial.png')
+            initial_frame = robot.capture_camera()
+            save_png(initial_frame, output / 'initial.png')
+            recording_robot = RecordingRobot(robot, output, initial_frame)
             started = time.monotonic()
             previous_handler = signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(args.max_runtime)
             try:
-                policy(robot)
+                policy(recording_robot)
             except Exception as error:
                 status = 'failed'
                 error_message = f'{type(error).__name__}: {error}'
@@ -192,7 +281,9 @@ def main() -> None:
                 signal.signal(signal.SIGALRM, previous_handler)
                 runtime = time.monotonic() - started
             time.sleep(args.settle_seconds)
-            save_png(robot.capture_camera(), output / 'final.png')
+            final_frame = robot.capture_camera()
+            save_png(final_frame, output / 'final.png')
+            recording_robot.record_final(final_frame)
     except Exception as error:
         status = 'failed'
         error_message = f'{type(error).__name__}: {error}'

@@ -187,7 +187,7 @@ for attempt in $(seq 1 25); do
     printf -v previous_padded '%03d' "$previous"
     echo
     echo "MODEL FEEDBACK: $model_name attempt $attempt"
-    echo 'Have the same model review the previous initial image, final image, and public grade in:'
+    echo 'Have the same model review the previous images, action log, and public grade in:'
     echo "$model_root/attempt$previous_padded"
     echo 'Then have it revise policy.py for the next attempt.'
     read -r -p 'Press Enter after policy.py is ready... ' _
