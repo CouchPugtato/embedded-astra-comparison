@@ -2,8 +2,8 @@ You control a simulated Panda robot from RGB perception by editing `policy.py` i
 
 The policy may use only these methods on `robot`:
 - `capture_camera(timeout=5.0)` returns a fresh `CameraFrame` with `width`, `height`, packed row-major `rgb` bytes, `timestamp_ns`, and `pixel(x, y)`.
-- `get_end_effector_pose(timeout=5.0)` returns a pose with `x`, `y`, `z`, `position`, and quaternion `orientation`.
-- `move_to(position, orientation=None)` moves to an `(x, y, z)` position in metres. Omitting orientation preserves the current orientation.
+- `get_end_effector_pose(timeout=5.0)` returns the midpoint-between-fingertips pose with `x`, `y`, `z`, `position`, and quaternion `orientation`.
+- `move_to(position, orientation=None)` moves the midpoint between the fingertips to an `(x, y, z)` position in metres. Omitting orientation preserves the current orientation.
 - `move_relative(dx=0.0, dy=0.0, dz=0.0)` moves relative to the current pose.
 - `open_gripper()` and `close_gripper()` control the gripper.
 

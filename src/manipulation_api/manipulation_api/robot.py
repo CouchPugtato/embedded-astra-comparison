@@ -101,6 +101,7 @@ class Robot:
         velocity_scaling: float = 0.25,
         acceleration_scaling: float = 0.25,
         end_effector_frame: str = 'panda_link8',
+        tool_offset: float = 0.1034,
     ) -> None:
         if not 0.0 < velocity_scaling <= 1.0 or not 0.0 < acceleration_scaling <= 1.0:
             raise ValueError('velocity and acceleration scaling must be in (0, 1]')
@@ -110,6 +111,9 @@ class Robot:
         self.velocity_scaling = float(velocity_scaling)
         self.acceleration_scaling = float(acceleration_scaling)
         self.end_effector_frame = end_effector_frame
+        self._tool_offset = float(tool_offset)
+        if self._tool_offset <= 0.0:
+            raise ValueError('tool offset must be positive')
         self._owns_rclpy = not rclpy.ok()
         if self._owns_rclpy:
             rclpy.init()
@@ -163,6 +167,22 @@ class Robot:
         if magnitude < 1e-9:
             raise ValueError('orientation quaternion cannot be zero')
         return tuple(value / magnitude for value in q)  # type: ignore[return-value]
+
+    @staticmethod
+    def _rotate_vector(
+        vector: tuple[float, float, float],
+        quaternion: tuple[float, float, float, float],
+    ) -> tuple[float, float, float]:
+        x, y, z = vector
+        qx, qy, qz, qw = quaternion
+        tx = 2.0 * (qy * z - qz * y)
+        ty = 2.0 * (qz * x - qx * z)
+        tz = 2.0 * (qx * y - qy * x)
+        return (
+            x + qw * tx + qy * tz - qz * ty,
+            y + qw * ty + qz * tx - qx * tz,
+            z + qw * tz + qx * ty - qy * tx,
+        )
 
     @staticmethod
     def _wait_future(future: object, timeout: float, description: str):
@@ -254,14 +274,22 @@ class Robot:
                 transform = self._tf_buffer.lookup_transform(
                     'world', self.end_effector_frame, Time()
                 ).transform
+                orientation = self._normalize_quaternion(
+                    (
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                        transform.rotation.w,
+                    )
+                )
+                offset = self._rotate_vector(
+                    (0.0, 0.0, self._tool_offset), orientation
+                )
                 return Pose(
-                    transform.translation.x,
-                    transform.translation.y,
-                    transform.translation.z,
-                    transform.rotation.x,
-                    transform.rotation.y,
-                    transform.rotation.z,
-                    transform.rotation.w,
+                    transform.translation.x + offset[0],
+                    transform.translation.y + offset[1],
+                    transform.translation.z + offset[2],
+                    *orientation,
                 )
             except TransformException as error:
                 last_error = error
@@ -279,12 +307,18 @@ class Robot:
         if orientation is None:
             orientation = self.get_end_effector_pose().orientation
         qx, qy, qz, qw = self._normalize_quaternion(orientation)
+        offset_x, offset_y, offset_z = self._rotate_vector(
+            (0.0, 0.0, self._tool_offset), (qx, qy, qz, qw)
+        )
+        wrist_x = target_x - offset_x
+        wrist_y = target_y - offset_y
+        wrist_z = target_z - offset_z
 
         if not self._move_group.wait_for_server(timeout_sec=10.0):
             raise RobotError('MoveIt /move_action is unavailable')
 
         target = PoseMsg()
-        target.position.x, target.position.y, target.position.z = target_x, target_y, target_z
+        target.position.x, target.position.y, target.position.z = wrist_x, wrist_y, wrist_z
         target.orientation.x, target.orientation.y = qx, qy
         target.orientation.z, target.orientation.w = qz, qw
 
@@ -340,9 +374,21 @@ class Robot:
         wrapped_result = self._wait_future(
             goal_handle.get_result_async(), self.command_timeout, 'MoveIt execution'
         )
-        error_code = wrapped_result.result.error_code.val
+        moveit_error = wrapped_result.result.error_code
+        error_code = moveit_error.val
         if error_code != MoveItErrorCodes.SUCCESS:
-            raise RobotError(f'MoveIt failed with error code {error_code}')
+            details = [
+                f'MoveIt failed for tool position '
+                f'({target_x:.3f}, {target_y:.3f}, {target_z:.3f}) '
+                f'with error code {error_code}'
+            ]
+            message = getattr(moveit_error, 'message', '')
+            source = getattr(moveit_error, 'source', '')
+            if message:
+                details.append(message)
+            if source:
+                details.append(f'source: {source}')
+            raise RobotError('; '.join(details))
         return self.get_end_effector_pose()
 
     def move_relative(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0) -> Pose:
