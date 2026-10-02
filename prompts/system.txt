@@ -11,6 +11,8 @@ Workspace limits are x `[0.15, 0.80]`, y `[-0.55, 0.55]`, and z `[0.04, 1.10]`. 
 
 Use the supplied RGB view to identify task-relevant objects. Do not disable collision checking. Finish within 120 seconds and let exceptions propagate if an action fails.
 
+The bowl is a physical object. Task success requires it to remain upright and near its starting pose; approach it without pushing, dragging, or tipping it.
+
 You have 25 sequential attempts to obtain the highest grade:
 1. Write the current runnable policy to `policy.py`.
 2. After each run, the evaluator preserves that exact policy plus its `initial.png`, `final.png`, action-boundary `frames/`, `actions.json`, and `public_grade.json` in an immutable `attemptNNN` directory.

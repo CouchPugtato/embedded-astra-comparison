@@ -9,6 +9,7 @@ from pathlib import Path
 METRICS = {
     'task_success': ('Task success', 'Success', True),
     'grade_success': ('Scene grade', 'Passed grade', True),
+    'bowl_stable': ('Bowl stability', 'Stable', True),
     'policy_completed': ('Policy completion', 'Completed', True),
     'runtime_seconds': ('Policy runtime', 'Seconds', False),
     'targets_placed': ('Target cubes placed', 'Cubes', False),

@@ -20,7 +20,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectoryPoint
 
-from grading import INITIAL_POSITIONS, OBJECTS, read_positions
+from grading import INITIAL_POSES, RESET_MODELS, TRAY, read_poses, tray_status
 from manipulation_api import Robot
 
 
@@ -152,14 +152,14 @@ def _object_models() -> dict[str, str]:
     models = {
         model.get('name'): model
         for model in world.findall('model')
-        if model.get('name') in OBJECTS
+        if model.get('name') in RESET_MODELS
     }
-    missing = [name for name in OBJECTS if name not in models]
+    missing = [name for name in RESET_MODELS if name not in models]
     if missing:
         raise ResetError(f'missing object definitions: {", ".join(missing)}')
     return {
         name: f'<sdf version="1.9">{ElementTree.tostring(models[name], encoding="unicode")}</sdf>'
-        for name in OBJECTS
+        for name in RESET_MODELS
     }
 
 
@@ -192,7 +192,7 @@ def _replace_objects(timeout: float) -> None:
     node = GazeboNode()
     _set_paused(node, True, timeout)
     try:
-        for name in OBJECTS:
+        for name in RESET_MODELS:
             request = Entity(name=name, type=Entity.MODEL)
             _gazebo_request(
                 node,
@@ -202,7 +202,7 @@ def _replace_objects(timeout: float) -> None:
                 timeout,
                 require_success=False,
             )
-        for name in OBJECTS:
+        for name in RESET_MODELS:
             request = EntityFactory()
             request.sdf = models[name]
             request.allow_renaming = False
@@ -295,14 +295,19 @@ def reset_and_verify(seed: int, timeout: float = 30.0, settle_seconds: float = 1
     _progress('verifying controllers and robot joints')
     _check_ros(timeout)
     _progress('verifying object poses')
-    positions = read_positions('/world/tabletop/pose/info', timeout)
+    poses = read_poses('/world/tabletop/pose/info', timeout)
     misplaced = [
         name
-        for name, expected in INITIAL_POSITIONS.items()
-        if max(abs(actual - target) for actual, target in zip(positions[name], expected)) > 0.012
+        for name, expected in INITIAL_POSES.items()
+        if max(
+            abs(actual - target)
+            for actual, target in zip(poses[name][:3], expected[:3])
+        ) > 0.012
     ]
     if misplaced:
         raise ResetError(f'objects did not reset: {", ".join(misplaced)}')
+    if not tray_status(poses[TRAY])['stable']:
+        raise ResetError('bowl did not reset upright')
 
     _progress('verifying camera and TF')
     with Robot() as robot:
@@ -316,6 +321,7 @@ def reset_and_verify(seed: int, timeout: float = 30.0, settle_seconds: float = 1
         'gripper_ready': True,
         'robot_at_initial_joints': True,
         'objects_at_initial_poses': True,
+        'bowl_at_initial_pose': True,
         'camera': f'{frame.width}x{frame.height}',
         'tf_ready': True,
     }

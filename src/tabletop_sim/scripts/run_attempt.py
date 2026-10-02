@@ -10,7 +10,7 @@ import shutil
 import signal
 import time
 
-from grading import grade, public_grade, read_positions
+from grading import grade, public_grade, read_poses
 from image_file import save_png
 from manipulation_api import Robot
 from reset_environment import reset_and_verify
@@ -21,6 +21,7 @@ STAT_FIELDS = (
     'seed',
     'task_success',
     'grade_success',
+    'bowl_stable',
     'policy_completed',
     'runtime_seconds',
     'targets_placed',
@@ -221,6 +222,7 @@ def main() -> None:
         public = {
             **execution,
             'criteria': {
+                'bowl_stable': False,
                 'repeated_color_cubes_in_bowl': {'placed': 0, 'required': 2},
                 'unique_color_cubes_in_bowl': 0,
             },
@@ -234,6 +236,7 @@ def main() -> None:
                 'seed': args.seed,
                 'task_success': False,
                 'grade_success': False,
+                'bowl_stable': False,
                 'policy_completed': False,
                 'runtime_seconds': round(runtime, 3),
                 'targets_placed': 0,
@@ -289,7 +292,7 @@ def main() -> None:
         error_message = f'{type(error).__name__}: {error}'
 
     try:
-        private = grade(read_positions('/world/tabletop/pose/info', 5.0))
+        private = grade(read_poses('/world/tabletop/pose/info', 5.0))
     except Exception as error:
         finish_failure('grade_failed', error, runtime)
 
@@ -316,6 +319,7 @@ def main() -> None:
             'seed': args.seed,
             'task_success': effective_success,
             'grade_success': private['success'],
+            'bowl_stable': criteria['bowl_stable'],
             'policy_completed': status == 'completed',
             'runtime_seconds': round(runtime, 3),
             'targets_placed': criteria['repeated_color_cubes_in_bowl']['placed'],

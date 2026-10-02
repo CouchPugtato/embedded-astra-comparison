@@ -9,7 +9,7 @@ from shape_msgs.msg import SolidPrimitive
 
 
 class SceneSetup(Node):
-    """Install the static tabletop geometry into MoveIt's planning scene."""
+    """Install the tabletop and reset-position tray in MoveIt's planning scene."""
 
     def __init__(self) -> None:
         super().__init__('planning_scene_setup')
@@ -46,7 +46,11 @@ class SceneSetup(Node):
         # intersect panda_link0 while still protecting the manipulation area.
         scene.world.collision_objects = [
             self._box('table_work_surface', (1.0, 0.9, 0.08), (0.65, 0.0, -0.045)),
-            self._box('blue_tray_keepout', (0.22, 0.18, 0.075), (0.52, -0.22, 0.0375)),
+            self._box('blue_tray_base', (0.22, 0.18, 0.024), (0.52, -0.22, 0.012)),
+            self._box('blue_tray_rim_x_positive', (0.01, 0.18, 0.05), (0.625, -0.22, 0.047)),
+            self._box('blue_tray_rim_x_negative', (0.01, 0.18, 0.05), (0.415, -0.22, 0.047)),
+            self._box('blue_tray_rim_y_positive', (0.22, 0.01, 0.05), (0.52, -0.135, 0.047)),
+            self._box('blue_tray_rim_y_negative', (0.22, 0.01, 0.05), (0.52, -0.305, 0.047)),
         ]
         request = ApplyPlanningScene.Request()
         request.scene = scene

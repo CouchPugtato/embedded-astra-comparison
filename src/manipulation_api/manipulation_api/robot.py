@@ -378,6 +378,4 @@ class Robot:
         self._command_gripper(0.035, max_effort=20.0)
 
     def close_gripper(self) -> None:
-        # Command through the 5 cm cube's contact point; the controller treats
-        # a stable effort-limited stall as a successful grasp.
         self._command_gripper(0.020, max_effort=35.0)

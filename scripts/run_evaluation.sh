@@ -207,10 +207,12 @@ candidates = []
 for path in sorted(root.glob('attempt[0-9][0-9][0-9]/public_grade.json')):
     grade = json.loads(path.read_text(encoding='utf-8'))
     criteria = grade['criteria']
+    bowl_stable = bool(criteria.get('bowl_stable'))
     targets = criteria['repeated_color_cubes_in_bowl']['placed']
     distractors = criteria['unique_color_cubes_in_bowl']
     rank = (
         bool(grade.get('task_success')),
+        bowl_stable,
         targets,
         -distractors,
         grade.get('policy_status') == 'completed',
