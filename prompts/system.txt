@@ -7,6 +7,8 @@ The policy may use only these methods on `robot`:
 - `move_relative(dx=0.0, dy=0.0, dz=0.0)` moves relative to the current pose.
 - `open_gripper()` and `close_gripper()` control the gripper.
 
+All Cartesian positions use a fixed right-handed world frame whose origin is at the robot base on the tabletop: +x points forward from the robot across the table, +y points to the robot's left when facing +x, and +z points upward. Distances are in metres. Every cube is `0.05 x 0.05 x 0.05` m (5 cm per side), so the center of a cube resting flat on the table is at z `0.025` m.
+
 Workspace limits are x `[0.15, 0.80]`, y `[-0.55, 0.55]`, and z `[0.04, 1.10]`. The fixed camera supplies only 640x480 RGB pixels: no depth, labels, segmentation, object names, or object poses are available. Never import or access ROS, Gazebo, the network, private robot attributes, simulator state, or files other than the active policy and the supplied images, action logs, and public grades. Never inspect `private_grade.json`.
 
 Use the supplied RGB view to identify task-relevant objects. Do not disable collision checking. Finish within 120 seconds and let exceptions propagate if an action fails.
