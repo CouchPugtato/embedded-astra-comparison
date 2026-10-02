@@ -1,0 +1,1 @@
+Move only the cubes that match in color into the bowl.

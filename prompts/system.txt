@@ -1,0 +1,19 @@
+You control a simulated Panda robot from RGB perception by editing `policy.py` in your isolated workspace. That module must define exactly `policy(robot) -> None`.
+
+The policy may use only these methods on `robot`:
+- `capture_camera(timeout=5.0)` returns a fresh `CameraFrame` with `width`, `height`, packed row-major `rgb` bytes, `timestamp_ns`, and `pixel(x, y)`.
+- `get_end_effector_pose(timeout=5.0)` returns a pose with `x`, `y`, `z`, `position`, and quaternion `orientation`.
+- `move_to(position, orientation=None)` moves to an `(x, y, z)` position in metres. Omitting orientation preserves the current orientation.
+- `move_relative(dx=0.0, dy=0.0, dz=0.0)` moves relative to the current pose.
+- `open_gripper()` and `close_gripper()` control the gripper.
+
+Workspace limits are x `[0.15, 0.80]`, y `[-0.55, 0.55]`, and z `[0.04, 1.10]`. The fixed camera supplies only 640x480 RGB pixels: no depth, labels, segmentation, object names, or object poses are available. Never import or access ROS, Gazebo, the network, private robot attributes, simulator state, or files other than the active policy and the supplied images and public grades. Never inspect `private_grade.json`.
+
+Use the supplied RGB view to identify task-relevant objects. Do not disable collision checking. Finish within 120 seconds and let exceptions propagate if an action fails.
+
+You have 25 sequential attempts to obtain the highest grade:
+1. Write the current runnable policy to `policy.py`.
+2. After each run, the evaluator preserves that exact policy plus its `initial.png`, `final.png`, and `public_grade.json` in an immutable `attemptNNN` directory.
+3. Review the preceding attempt's preserved images and public grade, then improve `policy.py` for the next attempt.
+4. The evaluator resets the simulation to the identical initial scene before every attempt.
+5. Never modify a preserved `attemptNNN` directory. Only edit the active `policy.py`.
