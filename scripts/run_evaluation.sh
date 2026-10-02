@@ -2,11 +2,16 @@
 set -Eeo pipefail
 
 mode=full
+resume=0
 model_name=model
 while (( $# > 0 )); do
   case "$1" in
     --check)
       mode=check
+      shift
+      ;;
+    --resume)
+      resume=1
       shift
       ;;
     --model)
@@ -18,11 +23,15 @@ while (( $# > 0 )); do
       shift 2
       ;;
     *)
-      echo 'Usage: bash scripts/run_evaluation.sh [--check] [--model NAME]' >&2
+      echo 'Usage: bash scripts/run_evaluation.sh [--check] [--resume] [--model NAME]' >&2
       exit 2
       ;;
   esac
 done
+if [[ "$mode" == check && "$resume" == 1 ]]; then
+  echo '--check and --resume cannot be used together.' >&2
+  exit 2
+fi
 if [[ ! "$model_name" =~ ^[[:alnum:]_.-]+$ ]] \
     || [[ "$model_name" == '.' ]] || [[ "$model_name" == '..' ]]; then
   echo 'Model name may contain only letters, numbers, periods, underscores, and hyphens.' >&2
@@ -37,8 +46,76 @@ evaluation_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$evaluation_root"
 public_root="$evaluation_root/results/$model_name"
 private_root="$evaluation_root/private/$model_name"
-if [[ "$mode" == full ]] && { [[ -e "$public_root" ]] || [[ -e "$private_root" ]]; }; then
-  echo "Results already exist for $model_name. Choose a new --model name." >&2
+evaluation_seed=1
+start_attempt=1
+if [[ "$mode" == full && "$resume" == 1 ]]; then
+  if [[ ! -d "$public_root" || ! -d "$private_root" ]]; then
+    echo "Cannot resume $model_name: both $public_root and $private_root must exist." >&2
+    exit 2
+  fi
+  start_attempt="$(python3 - "$public_root" "$private_root" "$evaluation_seed" <<'PY'
+import csv
+import json
+from pathlib import Path
+import sys
+
+public_root = Path(sys.argv[1])
+private_root = Path(sys.argv[2])
+seed = int(sys.argv[3])
+
+for name in ('system.txt', 'task.txt', 'initial.png', 'policy.py', 'stats.csv'):
+    path = public_root / name
+    if not path.is_file() or path.stat().st_size == 0:
+        raise SystemExit(f'cannot resume: missing or empty {path}')
+
+with (public_root / 'stats.csv').open(newline='', encoding='utf-8') as stream:
+    rows = list(csv.DictReader(stream))
+try:
+    row_attempts = [int(row['attempt']) for row in rows]
+except (KeyError, TypeError, ValueError) as error:
+    raise SystemExit(f'cannot resume: invalid stats.csv: {error}') from error
+
+public_attempts = sorted(
+    int(path.name.removeprefix('attempt'))
+    for path in public_root.glob('attempt[0-9][0-9][0-9]')
+    if path.is_dir()
+)
+private_attempts = sorted(
+    int(path.name.removeprefix('attempt'))
+    for path in private_root.glob('attempt[0-9][0-9][0-9]')
+    if path.is_dir()
+)
+expected = list(range(1, len(rows) + 1))
+if row_attempts != expected:
+    raise SystemExit(f'cannot resume: stats attempts must be consecutive: {row_attempts}')
+if public_attempts != expected or private_attempts != expected:
+    raise SystemExit(
+        'cannot resume: public, private, and stats attempts do not match '
+        f'(public={public_attempts}, private={private_attempts}, stats={expected})'
+    )
+if len(expected) > 25:
+    raise SystemExit('cannot resume: evaluation contains more than 25 attempts')
+
+for attempt in expected:
+    directory = f'attempt{attempt:03d}'
+    public_grade = public_root / directory / 'public_grade.json'
+    private_grade = private_root / directory / 'private_grade.json'
+    policy = public_root / directory / 'policy.py'
+    for path in (public_grade, private_grade, policy):
+        if not path.is_file() or path.stat().st_size == 0:
+            raise SystemExit(f'cannot resume: missing or empty {path}')
+    for path in (public_grade, private_grade):
+        result = json.loads(path.read_text(encoding='utf-8'))
+        if result.get('attempt') != attempt or result.get('seed') != seed:
+            raise SystemExit(f'cannot resume: attempt or seed mismatch in {path}')
+    if int(rows[attempt - 1]['seed']) != seed:
+        raise SystemExit(f'cannot resume: seed mismatch in stats attempt {attempt}')
+
+print(len(expected) + 1)
+PY
+)"
+elif [[ "$mode" == full ]] && { [[ -e "$public_root" ]] || [[ -e "$private_root" ]]; }; then
+  echo "Results already exist for $model_name. Use --resume or choose a new model name." >&2
   exit 2
 fi
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH COLCON_PREFIX_PATH
@@ -51,8 +128,6 @@ timeout --foreground 600 colcon build --symlink-install
 set +u
 source install/setup.bash
 set -u
-
-evaluation_seed=1
 
 simulator_pid=''
 simulator_log="$(mktemp /tmp/tabletop_sim.XXXXXX.log)"
@@ -129,7 +204,9 @@ if [[ "$mode" == check ]]; then
   exit 0
 fi
 
-mkdir -p "$public_root" "$private_root"
+if [[ "$resume" == 0 ]]; then
+  mkdir -p "$public_root" "$private_root"
+fi
 
 run_attempt_managed() {
   local policy_path=$1
@@ -170,18 +247,26 @@ PY
 
 model_root="$public_root"
 model_private="$private_root"
-cp prompts/system.txt prompts/task.txt prompts/initial.png "$model_root/"
+if [[ "$resume" == 0 ]]; then
+  cp prompts/system.txt prompts/task.txt prompts/initial.png "$model_root/"
+  echo
+  echo "Beginning 25 attempts for $model_name."
+  echo "MODEL INPUT: $model_name attempt 1"
+  echo "Run the model with this as its entire workspace: $model_root"
+  echo 'Have it read system.txt, task.txt, and initial.png and create policy.py.'
+  while [[ ! -s "$model_root/policy.py" ]]; do
+    read -r -p 'Press Enter after policy.py has been created... ' _
+  done
+else
+  echo
+  if (( start_attempt <= 25 )); then
+    echo "Resuming $model_name at attempt $start_attempt of 25."
+  else
+    echo "$model_name already has all 25 attempts; finalizing results."
+  fi
+fi
 
-echo
-echo "Beginning 25 attempts for $model_name."
-echo "MODEL INPUT: $model_name attempt 1"
-echo "Run the model with this as its entire workspace: $model_root"
-echo 'Have it read system.txt, task.txt, and initial.png and create policy.py.'
-while [[ ! -s "$model_root/policy.py" ]]; do
-  read -r -p 'Press Enter after policy.py has been created... ' _
-done
-
-for attempt in $(seq 1 25); do
+for ((attempt = start_attempt; attempt <= 25; attempt++)); do
   if (( attempt > 1 )); then
     previous=$((attempt - 1))
     printf -v previous_padded '%03d' "$previous"
