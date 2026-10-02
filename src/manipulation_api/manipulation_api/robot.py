@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-import threading
 import time
 from typing import Iterable
 
@@ -12,7 +11,7 @@ from geometry_msgs.msg import Pose as PoseMsg
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import Constraints, MoveItErrorCodes, OrientationConstraint, PositionConstraint
 from rclpy.action import ActionClient
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
@@ -124,7 +123,6 @@ class Robot:
         self._gripper = ActionClient(
             self._node, ParallelGripperCommand, '/panda_hand_controller/gripper_cmd'
         )
-        self._camera_condition = threading.Condition()
         self._camera_frame: CameraFrame | None = None
         self._camera_sequence = 0
         self._camera_error: str | None = None
@@ -134,10 +132,8 @@ class Robot:
             self._camera_callback,
             qos_profile_sensor_data,
         )
-        self._executor = MultiThreadedExecutor(num_threads=2)
+        self._executor = SingleThreadedExecutor()
         self._executor.add_node(self._node)
-        self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
-        self._spin_thread.start()
 
     def __enter__(self) -> Robot:
         return self
@@ -148,9 +144,8 @@ class Robot:
     def close(self) -> None:
         if not hasattr(self, '_node'):
             return
-        self._executor.shutdown(timeout_sec=2.0)
-        self._spin_thread.join(timeout=2.0)
         self._executor.remove_node(self._node)
+        self._executor.shutdown(timeout_sec=2.0)
         self._node.destroy_node()
         del self._node
         if self._owns_rclpy and rclpy.ok():
@@ -184,12 +179,13 @@ class Robot:
             z + qw * tz + qx * ty - qy * tx,
         )
 
-    @staticmethod
-    def _wait_future(future: object, timeout: float, description: str):
-        event = threading.Event()
-        future.add_done_callback(lambda _future: event.set())
-        if not event.wait(timeout):
-            raise RobotError(f'timed out waiting for {description}')
+    def _wait_future(self, future: object, timeout: float, description: str):
+        deadline = time.monotonic() + timeout
+        while not future.done():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise RobotError(f'timed out waiting for {description}')
+            self._executor.spin_once(timeout_sec=min(0.1, remaining))
         exception = future.exception()
         if exception is not None:
             raise RobotError(f'{description} failed: {exception}') from exception
@@ -243,28 +239,25 @@ class Robot:
             frame = None
             error = str(exception)
 
-        with self._camera_condition:
-            self._camera_frame = frame
-            self._camera_error = error
-            self._camera_sequence += 1
-            self._camera_condition.notify_all()
+        self._camera_frame = frame
+        self._camera_error = error
+        self._camera_sequence += 1
 
     def capture_camera(self, timeout: float = 5.0) -> CameraFrame:
         if timeout <= 0.0:
             raise ValueError('timeout must be positive')
         deadline = time.monotonic() + timeout
-        with self._camera_condition:
-            starting_sequence = self._camera_sequence
-            while self._camera_sequence == starting_sequence:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    raise RobotError('no RGB camera frame received from /camera/image_raw')
-                self._camera_condition.wait(remaining)
-            if self._camera_error is not None:
-                raise RobotError(self._camera_error)
-            if self._camera_frame is None:
-                raise RobotError('RGB camera did not produce a usable frame')
-            return self._camera_frame
+        starting_sequence = self._camera_sequence
+        while self._camera_sequence == starting_sequence:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise RobotError('no RGB camera frame received from /camera/image_raw')
+            self._executor.spin_once(timeout_sec=min(0.1, remaining))
+        if self._camera_error is not None:
+            raise RobotError(self._camera_error)
+        if self._camera_frame is None:
+            raise RobotError('RGB camera did not produce a usable frame')
+        return self._camera_frame
 
     def get_end_effector_pose(self, timeout: float = 5.0) -> Pose:
         deadline = time.monotonic() + timeout
@@ -293,7 +286,9 @@ class Robot:
                 )
             except TransformException as error:
                 last_error = error
-                time.sleep(0.05)
+                self._executor.spin_once(
+                    timeout_sec=min(0.05, max(0.0, deadline - time.monotonic()))
+                )
         raise RobotError(f'no world -> {self.end_effector_frame} transform: {last_error}')
 
     # Arm movement

@@ -57,6 +57,7 @@ if [[ "$mode" == full && "$resume" == 1 ]]; then
 import csv
 import json
 from pathlib import Path
+import shutil
 import sys
 
 public_root = Path(sys.argv[1])
@@ -88,6 +89,35 @@ private_attempts = sorted(
 expected = list(range(1, len(rows) + 1))
 if row_attempts != expected:
     raise SystemExit(f'cannot resume: stats attempts must be consecutive: {row_attempts}')
+
+# A killed run can leave the next attempt directory before its grade and CSV row
+# are committed. Remove only that one ungraded trailing attempt and rerun it.
+missing_public = sorted(set(expected) - set(public_attempts))
+missing_private = sorted(set(expected) - set(private_attempts))
+if missing_public or missing_private:
+    raise SystemExit(
+        'cannot resume: completed attempt directories are missing '
+        f'(public={missing_public}, private={missing_private})'
+    )
+trailing = sorted(
+    (set(public_attempts) | set(private_attempts)) - set(expected)
+)
+next_attempt = len(expected) + 1
+if trailing:
+    if trailing != [next_attempt] or next_attempt > 25:
+        raise SystemExit(
+            'cannot resume: unexpected attempt directories '
+            f'(public={public_attempts}, private={private_attempts}, stats={expected})'
+        )
+    directory = f'attempt{next_attempt:03d}'
+    for root in (public_root, private_root):
+        path = root / directory
+        if path.exists():
+            shutil.rmtree(path)
+    print(f'removed incomplete {directory}; it will be rerun', file=sys.stderr)
+    public_attempts = expected
+    private_attempts = expected
+
 if public_attempts != expected or private_attempts != expected:
     raise SystemExit(
         'cannot resume: public, private, and stats attempts do not match '
