@@ -23,6 +23,11 @@ install(PROGRAMS scripts/prepare_scene.py
   RENAME prepare_scene
 )
 
+install(PROGRAMS scripts/replay_policy.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME replay_policy
+)
+
 install(FILES scripts/grading.py scripts/image_file.py scripts/reset_environment.py
   DESTINATION lib/${PROJECT_NAME}
 )
